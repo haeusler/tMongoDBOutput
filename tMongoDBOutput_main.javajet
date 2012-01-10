@@ -23,7 +23,7 @@ imports="
   INode node = (INode)codeGenArgument.getArgument();
   String cid = node.getUniqueName();
   String dataAction = ElementParameterParser.getValue(node,"__DATA_ACTION__");
-
+  boolean dontStoreNulls = new Boolean(ElementParameterParser.getValue(node,"__DONT_STORE_NULL_VALUES__"));
 
   /*
    * Retrieve internal schema : build columnList
@@ -67,6 +67,7 @@ imports="
    */
   %>
   com.mongodb.BasicDBObject newDoc = new com.mongodb.BasicDBObject();
+  com.mongodb.BasicDBObject nullFields = new com.mongodb.BasicDBObject();
   org.bson.types.ObjectId newDocId = null;
   <%
   for(IMetadataColumn colStmt : columnList)
@@ -87,15 +88,26 @@ imports="
         continue;
       }
     }
-    %>
-      newDoc.put("<%=colStmt%>", <%=incomingConnName%>.<%=colStmt%>);
-  <%
+    
+    if (dontStoreNulls && colStmt.isNullable()) {
+	    %>
+	      if (<%=incomingConnName%>.<%=colStmt%> != null) {
+	      	newDoc.put("<%=colStmt%>", <%=incomingConnName%>.<%=colStmt%>);
+	      } else {
+	      	nullFields.put("<%=colStmt%>", "1");
+	      }
+	  	<%
+	} else {
+		%>
+	      	newDoc.put("<%=colStmt%>", <%=incomingConnName%>.<%=colStmt%>);
+	  	<%
+	}
   }
   if ("INSERT".equals(dataAction)) {
 %>
       coll_<%=cid%>.insert(newDoc);
 <%
-  } else if ("INSERT_OR_UPDATE".equals(dataAction)) {
+  } else if ("INSERT_OR_REPLACE".equals(dataAction)) {
 %>
       coll_<%=cid%>.save(newDoc);
 <%
@@ -105,7 +117,15 @@ imports="
       com.mongodb.BasicDBObject updateOp = new com.mongodb.BasicDBObject("$set", newDoc);
       boolean upsert = <%="UPDATE_OR_INSERT".equals(dataAction)%>;
       coll_<%=cid%>.update(selector, updateOp, upsert, false);
+      
+      <% if (dontStoreNulls) { %>
+	      // Unset any values that were null
+	      if (!nullFields.isEmpty()) {
+	      	updateOp = new com.mongodb.BasicDBObject("$unset", nullFields);
+	      	coll_<%=cid%>.update(selector, updateOp, false, false);
+	      }
 <%
+	  }
   } else if ("DELETE".equals(dataAction)) {
 %>
       coll_<%=cid%>.remove(newDoc);
